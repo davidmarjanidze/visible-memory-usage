@@ -1,146 +1,123 @@
-type MemoryType = 'rss' | 'heapTotal' | 'heapUsed' | 'external' | 'arrayBuffers'
+import { getHeapStatistics } from 'node:v8'
 
-const chalk = {
-  green: (text: string) => '\x1b[32m' + text + '\x1b[0m',
-  yellow: (text: string) => '\x1b[33m' + text + '\x1b[0m',
-  red: (text: string) => '\x1b[31m' + text + '\x1b[0m'
+export type MemoryType =
+  'rss' | 'heapTotal' | 'heapUsed' | 'external' | 'arrayBuffers'
+
+export interface VisibleMemoryUsageOptions {
+  /** How many times per second the bar is redrawn, from 1 to 60. Default: 30. */
+  fps?: number
+  /** Which `process.memoryUsage()` value to show. Default: `'rss'`. */
+  memoryType?: MemoryType
+  /**
+   * Memory in MB that fills the whole bar. Default: the `--max-old-space-size`
+   * value if it's set, otherwise the V8 heap size limit.
+   */
+  maxMemory?: number
+  /** Where to draw the bar. Default: `process.stdout`. */
+  stream?: NodeJS.WriteStream
 }
 
-class VisibleMemoryUsage {
-  private maxOldSpaceSizeInMB!: number
-  private memoryUsageInMB!: number
-  private memoryType: MemoryType
-  private fps: number
-  private intervalId!: any
+const MB = 1024 * 1024
+const MEMORY_TYPES: readonly MemoryType[] = [
+  'rss',
+  'heapTotal',
+  'heapUsed',
+  'external',
+  'arrayBuffers'
+]
+const COLORS = ['\x1b[32m', '\x1b[33m', '\x1b[31m'] // green, yellow, red
+const RESET = '\x1b[0m'
+const BAR = '|'
 
-  constructor(fps: number = 60, memoryType: MemoryType = 'rss') {
-    if (fps < 1 || fps > 60)
-      throw new Error(`invalid argument value "${fps}" for "fps"`)
-    else this.fps = fps
+function getDefaultMaxMemory(): number {
+  const args = [...process.execArgv, process.env.NODE_OPTIONS ?? '']
+  const match = /--max-old-space-size=(\d+)/.exec(args.join(' '))
+  return match ? Number(match[1]) : getHeapStatistics().heap_size_limit / MB
+}
 
-    if (
-      !RegExp('^(rss|heapTotal|heapUsed|external|arrayBuffers)$').test(
-        memoryType
+export class VisibleMemoryUsage {
+  readonly fps: number
+  readonly memoryType: MemoryType
+  readonly maxMemory: number
+  private readonly stream: NodeJS.WriteStream
+  private timer?: NodeJS.Timeout
+
+  constructor(options: VisibleMemoryUsageOptions = {}) {
+    const {
+      fps = 30,
+      memoryType = 'rss',
+      maxMemory = getDefaultMaxMemory(),
+      stream = process.stdout
+    } = options
+
+    if (!(fps >= 1 && fps <= 60)) {
+      throw new RangeError(`"fps" must be between 1 and 60, got ${fps}`)
+    }
+    if (!MEMORY_TYPES.includes(memoryType)) {
+      throw new TypeError(
+        `"memoryType" must be one of ${MEMORY_TYPES.join(', ')}, got ${String(memoryType)}`
       )
-    )
-      throw new Error(`invalid argument value "${memoryType}" for "memoryType"`)
-    else this.memoryType = memoryType
-  }
-
-  showMemoryUsage(): (() => void) | undefined {
-    if (!this.intervalId) {
-      this.maxOldSpaceSizeInMB = this.getMaxOldSpaceSizeArgFromCli()
-      this.startPrinting(this.fps)
-      return () => this.hideMemoryUsage()
+    }
+    if (!(maxMemory > 0)) {
+      throw new RangeError(
+        `"maxMemory" must be a positive number, got ${maxMemory}`
+      )
     }
 
-    return
+    this.fps = fps
+    this.memoryType = memoryType
+    this.maxMemory = maxMemory
+    this.stream = stream
   }
 
-  hideMemoryUsage(): void {
-    clearInterval(this.intervalId)
-    this.intervalId = undefined
-    this.printOnSingleLine('')
+  get isRunning(): boolean {
+    return this.timer !== undefined
   }
 
-  private getMaxOldSpaceSizeArgFromCli(): number {
-    let maxOldSpaceSizeArg: undefined | string = process.execArgv.find((argv) =>
-      RegExp('^--max-old-space-size=\\d+$').exec(argv)
-    )
+  /** Starts drawing the bar. Does nothing if it's already running or the stream is not a terminal. */
+  start(): this {
+    if (this.isRunning || !this.stream.isTTY) return this
 
-    if (maxOldSpaceSizeArg) return Number(maxOldSpaceSizeArg.split('=')[1])
-    else throw new Error('`--max-old-space-size` argument was not provided')
+    this.render()
+    this.timer = setInterval(() => this.render(), 1000 / this.fps)
+    // Don't keep the process alive just to draw the bar.
+    this.timer.unref()
+    return this
   }
 
-  private getMemoryUsage(memoryType: MemoryType): number {
-    const memoryUsage = process.memoryUsage()
-    return memoryUsage[memoryType] / 1e6
+  /** Stops drawing and clears the bar from the terminal. */
+  stop(): this {
+    if (!this.isRunning) return this
+
+    clearInterval(this.timer)
+    this.timer = undefined
+    this.writeLine('')
+    return this
   }
 
-  private startPrinting(fps: number): void {
-    this.intervalId = setInterval(() => {
-      this.memoryUsageInMB = this.getMemoryUsage(this.memoryType)
-      const memoryUsageInMBString = String(Math.round(this.memoryUsageInMB))
-      const memoryColorSegmentLengthInMB =
-        this.maxOldSpaceSizeInMB / Object.keys(chalk).length
-      const columnLengthForEachSegment = Math.floor(
-        (process.stdout.columns - memoryUsageInMBString.length) /
-          Object.keys(chalk).length
-      )
+  private render(): void {
+    const used = process.memoryUsage()[this.memoryType] / MB
+    const label = ` ${Math.round(used)}/${Math.round(this.maxMemory)} MB`
+    // Leave the last column empty so the terminal doesn't wrap the line.
+    const width = Math.max((this.stream.columns ?? 80) - label.length - 1, 0)
+    const filled = Math.min(Math.round((used / this.maxMemory) * width), width)
 
-      let greenBars = this.generateBars(
-        memoryColorSegmentLengthInMB,
-        columnLengthForEachSegment,
-        0,
-        memoryColorSegmentLengthInMB,
-        'green'
-      )
+    let bar = ''
+    for (let i = 0; i < COLORS.length; i++) {
+      const start = Math.floor((width * i) / COLORS.length)
+      const end = Math.floor((width * (i + 1)) / COLORS.length)
+      const colored = Math.min(Math.max(filled - start, 0), end - start)
 
-      let yellowBars = this.generateBars(
-        memoryColorSegmentLengthInMB,
-        columnLengthForEachSegment,
-        memoryColorSegmentLengthInMB,
-        memoryColorSegmentLengthInMB * 2,
-        'yellow'
-      )
+      if (colored > 0) bar += COLORS[i] + BAR.repeat(colored) + RESET
+      bar += BAR.repeat(end - start - colored)
+    }
 
-      let redBars = this.generateBars(
-        memoryColorSegmentLengthInMB,
-        columnLengthForEachSegment,
-        memoryColorSegmentLengthInMB * 2,
-        memoryColorSegmentLengthInMB * 3,
-        'red'
-      )
-
-      this.printOnSingleLine(
-        greenBars + yellowBars + redBars + memoryUsageInMBString
-      )
-    }, 1e3 / fps)
+    this.writeLine(bar + label)
   }
 
-  private generateBars(
-    memoryColorSegmentLengthInMB: number,
-    columnLengthForEachSegment: number,
-    lowerMemoryBoundInMB: number,
-    upperMemoryBoundInMB: number,
-    color: 'green' | 'yellow' | 'red'
-  ): string {
-    let coloredBarsLength = 0
-
-    if (lowerMemoryBoundInMB > this.memoryUsageInMB) coloredBarsLength = 0
-    if (lowerMemoryBoundInMB <= this.memoryUsageInMB)
-      coloredBarsLength = Math.round(
-        ((this.memoryUsageInMB - lowerMemoryBoundInMB) /
-          memoryColorSegmentLengthInMB) *
-          columnLengthForEachSegment
-      )
-    if (this.memoryUsageInMB > upperMemoryBoundInMB)
-      coloredBarsLength = columnLengthForEachSegment
-
-    let whiteBarsLength = columnLengthForEachSegment - coloredBarsLength
-    whiteBarsLength = whiteBarsLength > 0 ? whiteBarsLength : 0
-
-    let coloredBars = ''
-    if (coloredBarsLength > 0)
-      switch (color) {
-        case 'green':
-          coloredBars = chalk.green('|'.repeat(coloredBarsLength))
-          break
-        case 'yellow':
-          coloredBars = chalk.yellow('|'.repeat(coloredBarsLength))
-          break
-        case 'red':
-          coloredBars = chalk.red('|'.repeat(coloredBarsLength))
-      }
-
-    return `${coloredBars}${'|'.repeat(whiteBarsLength)}`
-  }
-
-  private printOnSingleLine(message: string): void {
-    process.stdout.clearLine(-1)
-    process.stdout.cursorTo(-1)
-    process.stdout.write(message)
+  private writeLine(text: string): void {
+    this.stream.cursorTo(0)
+    this.stream.write(text)
+    this.stream.clearLine(1)
   }
 }
-
-export { VisibleMemoryUsage }

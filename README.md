@@ -1,62 +1,89 @@
-## Visible Memory Usage v1.3.0 Documentation
+# visible-memory-usage
 
-<p align="center">
-  <a href="https://www.npmjs.com/package/visible-memory-usage" target="_blank"><img src="https://img.shields.io/npm/v/visible-memory-usage.svg" alt="NPM Version" /></a>
-  <a href="https://www.npmjs.com/package/visible-memory-usage" target="_blank"><img src="https://img.shields.io/npm/l/visible-memory-usage.svg" alt="Package License" /></a>
-</p>
+[![npm version](https://img.shields.io/npm/v/visible-memory-usage.svg)](https://www.npmjs.com/package/visible-memory-usage)
+[![license](https://img.shields.io/npm/l/visible-memory-usage.svg)](https://www.npmjs.com/package/visible-memory-usage)
 
-### Table of contents
+Shows the memory usage of a Node.js process as a bar in the terminal. The bar
+is green for the first third, yellow for the second and red for the last. Can
+be useful when you are looking for a memory leak.
 
-- [Description](#Description)
-- [Installation](#Installation)
-- [Usage example](#Usage-example)
-- [API](#API)
-  - [class VisibleMemoryUsage](#class-VisibleMemoryUsage)
-- [Tip](#Tip)
+![Example](https://github.com/davidmarjanidze/visible-memory-usage/blob/main/example.gif?raw=true)
 
-### Description
-
-Node.js package for displaying memory usage as bars in the console. In
-order to make this library work, it is necessary to pass a Node.js cli
-argument `--max-old-space-size`.
-<br>
-<br>
-![Example](https://github.com/datomarjanidze/visible-memory-usage/blob/main/example.gif?raw=true)
-
-### Installation
+## Installation
 
 ```console
 npm i -D visible-memory-usage
 ```
 
-### Usage example
+Requires Node.js 18 or newer.
 
-```typescript
+## Usage
+
+```js
 import { VisibleMemoryUsage } from 'visible-memory-usage'
-const visibleMemoryUsage = new VisibleMemoryUsage()
 
-visibleMemoryUsage.showMemoryUsage()
-setTimeout(
-  () => visibleMemoryUsage.hideMemoryUsage(),
-  4e3 // Hide in 4 seconds
-)
+const memoryUsage = new VisibleMemoryUsage().start()
+
+// Later, when you want to remove the bar:
+memoryUsage.stop()
 ```
 
-### API
+CommonJS works too:
 
-### `class VisibleMemoryUsage`
+```js
+const { VisibleMemoryUsage } = require('visible-memory-usage')
+```
 
-- `constructor(fps: number = 60, memoryType: MemoryType = "rss")`
-  - **fps (number):** (Frames Per Second) is the frequency at which memory
-    usage will be updated. Its value can be from `1` to `60`. Lower the
-    value, lower the CPU load will be. Default is `60`.
-  - **memoryType (string):** memory types are the keys of the Node.js
-    `process.memoryUsage()` returned object and those are:
-    `'rss' | 'heapTotal' | 'heapUsed' | 'external' | 'arrayBuffers'`.
-    Default value is `'rss'`
-- **showMemoryUsage():** method is used to display the memory.
-- **hideMemoryUsage():** method is used to hide the memory.
+By default the full bar equals the `--max-old-space-size` value, so you can
+run your app like this:
 
-### Tip
+```console
+node --max-old-space-size=512 app.js
+```
 
-Can be helpful when you are trying to find a memory leak.
+If the flag is not set, the V8 heap size limit is used instead. You can also
+set your own value with the `maxMemory` option.
+
+## API
+
+### `new VisibleMemoryUsage(options?)`
+
+All options are optional.
+
+| Option       | Type                 | Default                                 | Description                                                                                                             |
+| ------------ | -------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `fps`        | `number`             | `30`                                    | How many times per second the bar is redrawn. From `1` to `60`. Lower values use less CPU.                              |
+| `memoryType` | `string`             | `'rss'`                                 | Which value of `process.memoryUsage()` to show: `'rss'`, `'heapTotal'`, `'heapUsed'`, `'external'` or `'arrayBuffers'`. |
+| `maxMemory`  | `number`             | `--max-old-space-size` or V8 heap limit | Memory in MB that fills the whole bar.                                                                                  |
+| `stream`     | `NodeJS.WriteStream` | `process.stdout`                        | Where to draw the bar, for example `process.stderr`.                                                                    |
+
+The constructor throws if an option has an invalid value.
+
+### `start()`
+
+Starts drawing the bar. Returns the instance. Calling it again while the bar is
+running does nothing. If the stream is not a terminal (for example when output
+is piped to a file), nothing is drawn.
+
+The bar does not keep the process alive. When your app has nothing else to do,
+it exits as usual.
+
+### `stop()`
+
+Stops drawing and clears the bar. Returns the instance.
+
+### `isRunning`
+
+`true` while the bar is being drawn.
+
+## Upgrading from 1.x
+
+- Options are now passed as an object: `new VisibleMemoryUsage({ fps: 10 })`
+  instead of `new VisibleMemoryUsage(10)`.
+- `showMemoryUsage()` is now `start()` and `hideMemoryUsage()` is now `stop()`.
+- `--max-old-space-size` is no longer required.
+- Default `fps` changed from `60` to `30`.
+
+## License
+
+ISC
