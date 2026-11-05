@@ -1,8 +1,8 @@
 {
   "name": "visible-memory-usage",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Show memory usage of a Node.js process as a colored bar in the terminal.",
-  "author": "Dato Marjanidze",
+  "author": "David Marjanidze",
   "license": "ISC",
   "homepage": "https://github.com/davidmarjanidze/visible-memory-usage#readme",
   "repository": {
