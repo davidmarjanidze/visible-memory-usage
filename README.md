@@ -76,14 +76,6 @@ Stops drawing and clears the bar. Returns the instance.
 
 `true` while the bar is being drawn.
 
-## Upgrading from 1.x
-
-- Options are now passed as an object: `new VisibleMemoryUsage({ fps: 10 })`
-  instead of `new VisibleMemoryUsage(10)`.
-- `showMemoryUsage()` is now `start()` and `hideMemoryUsage()` is now `stop()`.
-- `--max-old-space-size` is no longer required.
-- Default `fps` changed from `60` to `30`.
-
 ## License
 
 ISC
